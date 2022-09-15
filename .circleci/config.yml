@@ -1,0 +1,114 @@
+version: 2.1
+
+parameters:
+    action:
+      type: string
+      default: "destroy"
+    labs:
+      type: integer
+      default: 1
+    labprefix:
+      type: string
+      default: "test"
+
+references:
+
+base_image: &base_image
+  hashicorp/terraform:0.14.10
+
+working_directory: &working_directory
+  ~/monaco
+
+default_config: &default_config
+  docker:
+    - image: *base_image
+  parallelism: << pipeline.parameters.labs >>
+  working_directory: *working_directory
+
+jobs:
+  apply:
+    <<: *default_config
+    steps:
+      - checkout
+      - run:
+          name: Run Terraform
+          no_output_timeout: 15m
+          command: |
+            echo $CIRCLE_NODE_INDEX
+            ls -l 
+            pwd
+            apk update && apk add curl curl-dev bash
+            curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.17.0/bin/linux/amd64/kubectl
+            chmod +x ./kubectl
+            mv ./kubectl /usr/local/bin/kubectl
+            kubectl version --client
+            curl -o aws-iam-authenticator https://amazon-eks.s3-us-west-2.amazonaws.com/1.14.6/2019-08-22/bin/linux/amd64/aws-iam-authenticator
+            chmod +x ./aws-iam-authenticator
+            mkdir -p $HOME/bin && cp ./aws-iam-authenticator $HOME/bin/aws-iam-authenticator && export PATH=$PATH:$HOME/bin
+            echo 'export PATH=$PATH:$HOME/bin' >> ~/.bashrc
+            aws-iam-authenticator help
+            cd ~/monaco/src/
+            cp terraform.tftemplate variables.tf
+            sed -i -- "s/VARNAME/<< pipeline.parameters.labprefix >>-"$CIRCLE_NODE_INDEX"/g" variables.tf
+            cat variables.tf
+            terraform init 
+            terraform apply --auto-approve
+            terraform apply --auto-approve -refresh=false
+#  destroy:
+#    <<: *default_config
+#    steps:
+#      - checkout
+#      - run:
+#          name: Run Terraform
+#          no_output_timeout: 15m
+#          command: |
+#            echo $CIRCLE_NODE_INDEX
+#            ls -l 
+#            pwd
+#            cd ~/monaco/src/
+#            cp terraform.tftemplate variables.tf
+#            sed -i -- "s/VARNAME/<< pipeline.parameters.labprefix >>-"$CIRCLE_NODE_INDEX"/g" variables.tf
+#            cat variables.tf
+#            terraform init 
+#            terraform destroy --auto-approve
+#            terraform destroy --auto-approve -refresh=false
+
+  destroy:
+    <<: *default_config
+    steps:
+      - checkout
+      - run:
+          name: Run AWS-Nuke
+          no_output_timeout: 15m
+          halt_build_on_fail: false
+          command: |
+            echo $CIRCLE_NODE_INDEX
+            apk update && apk add curl curl-dev bash
+            curl -LO https://github.com/rebuy-de/aws-nuke/releases/download/v2.14.0/aws-nuke-v2.14.0-linux-amd64
+            mv aws-nuke-v2.14.0-linux-amd64 aws-nuke
+            chmod u+x aws-nuke
+            cp aws-nuke /bin/
+            curl -LO https://cloudone-india-workshop.s3.amazonaws.com/nuke-config.yml
+            curl -LO https://cloudone-india-workshop.s3.amazonaws.com/nuke-configg.yml
+            curl -LO https://cloudone-india-workshop.s3.amazonaws.com/nuke-configgg.yml
+            aws-nuke -c /root/monaco/nuke-config.yml --access-key-id $Access --secret-access-key $Secret --force --no-dry-run || true
+            aws-nuke -c /root/monaco/nuke-config.yml --access-key-id $Access --secret-access-key $Secret --force --no-dry-run || true
+            aws-nuke -c /root/monaco/nuke-configg.yml --access-key-id $Access --secret-access-key $Secret --force --no-dry-run || true
+            aws-nuke -c /root/monaco/nuke-configg.yml --access-key-id $Access --secret-access-key $Secret --force --no-dry-run || true
+            aws-nuke -c /root/monaco/nuke-configgg.yml --access-key-id $Access --secret-access-key $Secret --force --no-dry-run || true
+            aws-nuke -c /root/monaco/nuke-configgg.yml --access-key-id $Access --secret-access-key $Secret --force --no-dry-run || true
+            
+workflows:
+  version: 2
+  infrasructure_builder:
+    jobs:
+      - hold_apply:
+          type: approval
+      - apply: 
+          requires:
+            - hold_apply
+      - hold_destroy:
+          type: approval
+      - destroy: 
+          requires:
+            - hold_destroy
